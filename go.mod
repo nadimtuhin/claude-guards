@@ -1,3 +1,3 @@
-module github.com/OWNER/claude-guards
+module github.com/nadimtuhin/claude-guards
 
 go 1.26
