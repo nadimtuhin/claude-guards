@@ -339,16 +339,6 @@ func merge(base map[string]string, kv ...string) map[string]string {
 	return out
 }
 
-func TestUnmeasurableMachineKeepsLoadOnlyBlock(t *testing.T) {
-	for _, dir := range []string{"/bin", "/usr/sbin", "/nonexistent"} {
-		t.Setenv("PATH", dir)
-		code, msg := run(t, "pnpm build", roomy)
-		if code != 2 || !strings.Contains(msg, "capacity could not be measured") {
-			t.Errorf("PATH=%s: want unmeasured block, got %d %q", dir, code, msg)
-		}
-	}
-}
-
 func TestConcurrencyCountsRunnersNotWorkers(t *testing.T) {
 	runner := "  100     1 node /r/node_modules/.bin/vitest run"
 	var workers []string
@@ -501,4 +491,72 @@ func TestDefaultsMatchDocumentedValues(t *testing.T) {
 func TestVitestControls(t *testing.T) {
 	expectCodes(t, 2, saturated, "npx vitest run")
 	expectCodes(t, 0, saturated, `echo "vitest"`, "echo 'vitest run'", "cat <<EOF\nnpx vitest run\nEOF")
+}
+
+func TestAbsolutePathsAndShellSyntaxAreCostly(t *testing.T) {
+	cases := []struct {
+		command string
+		costly  bool
+	}{
+		{"/usr/bin/make", true},
+		{"/usr/local/go/bin/go build ./...", true},
+		{"~/.cargo/bin/cargo build", true},
+		{"/usr/bin/docker build .", true},
+		{"/usr/bin/pip3 install x", true},
+		{"/opt/homebrew/bin/brew install jq", true},
+		{"exec make", true},
+		{"{ make; }", true},
+		{"! make", true},
+		{"if make; then echo ok; fi", true},
+		{"while make; do :; done", true},
+		{"if false; then :; else pnpm build; fi", true},
+		{"/usr/bin/git status", false},
+		{"ls /usr/bin/make", false},
+		{"echo /usr/bin/make", false},
+		{"if test -f x; then echo ok; fi", false},
+		{"cat Makefile", false},
+	}
+	for _, c := range cases {
+		if got := isCostly(c.command); got != c.costly {
+			t.Errorf("isCostly(%q) = %v, want %v", c.command, got, c.costly)
+		}
+	}
+}
+
+func TestParentCycleDoesNotHang(t *testing.T) {
+	cases := []struct {
+		name, ps string
+		want     int
+	}{
+		{"two-process cycle", "  100   200 50.0 node /r/node_modules/.bin/vitest run\n  200   100 50.0 node /r/node_modules/.bin/vitest run", 1},
+		{"three-process cycle", "  100   300 50.0 /r/node_modules/.bin/tsc -p .\n  200   100 50.0 /r/node_modules/.bin/tsc -p .\n  300   200 50.0 /r/node_modules/.bin/tsc -p .", 1},
+		{"cycle plus a separate tree", "  100   200 50.0 node /r/node_modules/.bin/vitest run\n  200   100 50.0 node /r/node_modules/.bin/vitest run\n  400     1 50.0 node /r/node_modules/.bin/jest --ci", 2},
+	}
+	for _, c := range cases {
+		done := make(chan int, 1)
+		go func() { done <- runningHeavyRoots(c.ps, 5) }()
+		select {
+		case got := <-done:
+			if got != c.want {
+				t.Errorf("%s: got %d want %d", c.name, got, c.want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: runningHeavyRoots hung on a parent cycle", c.name)
+		}
+	}
+}
+
+// why: PATH=/bin used to stand in for "no probes", but on merged-/usr Linux /bin has ps and the
+// pressure probe is skipped, so capacity was measured and the test failed. An empty dir has nothing.
+func TestUnmeasurableMachineKeepsLoadOnlyBlock(t *testing.T) {
+	if _, err := exec.LookPath("ps"); err != nil {
+		t.Skip("ps not installed")
+	}
+	for _, dir := range []string{t.TempDir(), "/nonexistent"} {
+		t.Setenv("PATH", dir)
+		code, msg := run(t, "pnpm build", roomy)
+		if code != 2 || !strings.Contains(msg, "capacity could not be measured") {
+			t.Errorf("PATH=%s: want unmeasured block, got %d %q", dir, code, msg)
+		}
+	}
 }

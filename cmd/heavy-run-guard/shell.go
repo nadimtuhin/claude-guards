@@ -15,6 +15,7 @@ func splitSegments(command string) [][]string {
 	var words []string
 	var word strings.Builder
 	var pending []heredoc
+	var nested [][]string
 	inWord := false
 
 	endWord := func() {
@@ -46,6 +47,12 @@ func splitSegments(command string) [][]string {
 			for i++; i < len(runes) && runes[i] != '"'; i++ {
 				if runes[i] == '\\' && i+1 < len(runes) {
 					i++
+				} else if body, end, ok := substitutionAt(runes, i); ok {
+					// why: $(...) and `...` inside double quotes still run on this machine.
+					nested = append(nested, splitSegments(body)...)
+					word.WriteString(string(runes[i : end+1]))
+					i = end
+					continue
 				}
 				word.WriteRune(runes[i])
 			}
@@ -79,12 +86,13 @@ func splitSegments(command string) [][]string {
 			}
 			i += consumed
 			pending = nil
-		case c == ';':
+		case c == ';' || c == '(' || c == ')' || c == '`':
+			// why: subshells, command substitutions and grouping start a new command.
 			endSegment()
 		case (c == '&' || c == '|') && i+1 < len(runes) && runes[i+1] == c:
 			endSegment()
 			i++
-		case c == '|':
+		case c == '|' || c == '&':
 			endSegment()
 		case c == ' ' || c == '\t':
 			endWord()
@@ -94,7 +102,36 @@ func splitSegments(command string) [][]string {
 		}
 	}
 	endSegment()
-	return segments
+	return append(segments, nested...)
+}
+
+// substitutionAt reports whether a command substitution starts at runes[i] and returns its body
+// and the index of its closing rune.
+func substitutionAt(runes []rune, i int) (string, int, bool) {
+	if runes[i] == '`' {
+		for j := i + 1; j < len(runes); j++ {
+			if runes[j] == '`' {
+				return string(runes[i+1 : j]), j, true
+			}
+		}
+		return "", 0, false
+	}
+	if runes[i] != '$' || i+1 >= len(runes) || runes[i+1] != '(' {
+		return "", 0, false
+	}
+	depth := 0
+	for j := i + 1; j < len(runes); j++ {
+		switch runes[j] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return string(runes[i+2 : j]), j, true
+			}
+		}
+	}
+	return "", 0, false
 }
 
 // skipHeredocBody returns rest without the lines up to and including the terminator, and the
