@@ -10,16 +10,16 @@ import (
 
 const (
 	envPrefix = `(?:export\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*`
-	separator = `(?:^|[;&|\n]\s*|["'` + "`" + `(]\s*|\b(?:then|do)\s+|` +
-		`\b(?:sudo|time|nohup|caffeinate|env|timeout|nice|stdbuf|arch|command|eval|xargs|npx|bunx|pnpm(?:\s+(?:dlx|exec))?)` +
+	separator = `(?:^|[;&|\n]\s*|["'` + "`" + `(]\s*|(?:^|[;&|\n(]\s*)[{!]\s+|\b(?:then|do|else|elif|if|while|until)\s+|` +
+		`\b(?:sudo|time|nohup|caffeinate|env|timeout|nice|stdbuf|arch|command|exec|eval|xargs|npx|bunx|pnpm(?:\s+(?:dlx|exec))?)` +
 		`(?:\s+(?:-\S+|\d+))*\s+)`
 	binaryPath    = `(?:\S*/)?`
 	packageRunner = binaryPath + `(?:pnpm|npm|yarn|bun|npx)\s+(?:\S+\s+)*?(?:build|test|typecheck|lint|install|ci|i)\b`
-	otherHeavy    = binaryPath + `(?:vitest|jest|playwright|tsc|esbuild|webpack|xcodebuild|gradlew|mvn)\b` +
+	otherHeavy    = binaryPath + `(?:(?:vitest|jest|playwright|tsc|esbuild|webpack|xcodebuild|gradlew|mvn)\b` +
 		`|(?:cargo|go)\s+(?:build|test|run)\b` +
 		`|docker(?:\s+compose)?\s+build\b` +
 		`|(?:pip3?|brew)\s+install\b` +
-		`|make\b`
+		`|make\b)`
 )
 
 var (

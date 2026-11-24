@@ -64,12 +64,19 @@ func runningHeavyRoots(psOutput string, busyCPUPercent float64) int {
 	treeCPU := map[int]float64{}
 	for pid, proc := range heavy {
 		root := pid
+		// why: ps is not an atomic snapshot, so PID reuse can show a parent cycle; stop at the
+		// first revisit (the lowest PID in the cycle is the root) instead of looping forever.
+		seen := map[int]bool{pid: true}
 		for {
-			_, ok := heavy[heavy[root].ppid]
-			if !ok || heavy[root].ppid == root {
+			parent := heavy[root].ppid
+			if _, ok := heavy[parent]; !ok || seen[parent] {
+				if seen[parent] {
+					root = lowestPIDInCycle(heavy, parent)
+				}
 				break
 			}
-			root = heavy[root].ppid
+			seen[parent] = true
+			root = parent
 		}
 		treeCPU[root] += proc.cpu
 	}
@@ -80,6 +87,14 @@ func runningHeavyRoots(psOutput string, busyCPUPercent float64) int {
 		}
 	}
 	return roots
+}
+
+func lowestPIDInCycle(heavy map[int]heavyProc, start int) int {
+	lowest := start
+	for pid := heavy[start].ppid; pid != start; pid = heavy[pid].ppid {
+		lowest = min(lowest, pid)
+	}
+	return lowest
 }
 
 func etimeSeconds(etime string) int {

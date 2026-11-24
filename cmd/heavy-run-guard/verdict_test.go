@@ -30,3 +30,127 @@ func TestAllowed(t *testing.T) {
 		}
 	}
 }
+
+func TestHeavyOKOnlyAsLeadingAssignment(t *testing.T) {
+	cases := []struct {
+		command string
+		blocked bool
+	}{
+		{"HEAVY_OK=1 npx vitest run", false},
+		{"CI=1 HEAVY_OK=1 npx vitest run", false},
+		{"export HEAVY_OK=1; npx vitest run", false},
+		{"echo HEAVY_OK=1; npx vitest run", true},
+		{`git commit -m "HEAVY_OK=1" && npx vitest run`, true},
+		{"grep HEAVY_OK=1 README.md && npx tsc --noEmit", true},
+		{"HEAVY_OK=1 true; npx vitest run", true},
+		{"export HEAVY_OK=1\nnpx vitest run", false},
+		{"export HEAVY_OK=1 && npx vitest run", false},
+		{"export HEAVY_OK=1 || echo failed; npx vitest run", false},
+		{"cd web; export CI=1 HEAVY_OK=1; npx vitest run", false},
+		{"export HEAVY_OK=1; (npx vitest run)", false},
+		{"npx vitest run; export HEAVY_OK=1", true},
+	}
+	for _, c := range cases {
+		if got := verdict(c.command) != ""; got != c.blocked {
+			t.Errorf("verdict(%q) blocked=%v, want %v", c.command, got, c.blocked)
+		}
+	}
+}
+
+// An export only overrides when it is a top-level, unconditional statement: anything that might
+// not run, or runs in a child shell, must not unlock later commands.
+func TestHeavyOKExportMustBeTopLevelAndUnconditional(t *testing.T) {
+	cases := []struct {
+		command string
+		blocked bool
+	}{
+		{"(export HEAVY_OK=1); npx vitest run", true},
+		{"( export HEAVY_OK=1 ) && npx vitest run", true},
+		{"false && export HEAVY_OK=1; npx vitest run", true},
+		{"true || export HEAVY_OK=1; npx vitest run", true},
+		{"if false; then export HEAVY_OK=1; fi; npx vitest run", true},
+		{"if false\nthen\nexport HEAVY_OK=1\nfi\nnpx vitest run", true},
+		{"if false; then :; else export HEAVY_OK=1; fi; npx vitest run", true},
+		{"while false; do export HEAVY_OK=1; done; npx vitest run", true},
+		{"for x in; do\nexport HEAVY_OK=1\ndone\nnpx vitest run", true},
+		{"case x in y) export HEAVY_OK=1;; esac; npx vitest run", true},
+		{"f() { export HEAVY_OK=1; }; npx vitest run", true},
+		{"{ false && export HEAVY_OK=1; }; npx vitest run", true},
+		{"echo $(export HEAVY_OK=1); npx vitest run", true},
+		{"echo \"$(export HEAVY_OK=1)\"; npx vitest run", true},
+		{"echo `export HEAVY_OK=1`; npx vitest run", true},
+		{"export HEAVY_OK=1 | cat; npx vitest run", true},
+		{"export HEAVY_OK=1 & npx vitest run", true},
+		{"bash -c 'export HEAVY_OK=1'; npx vitest run", true},
+		{"if true; then :; fi; export HEAVY_OK=1; npx vitest run", false},
+		{"if c; then { :; }; export HEAVY_OK=1; fi; npx vitest run", true},
+		{"while c; do { :; }; export HEAVY_OK=1; done; npx vitest run", true},
+		{"if a; then if b; then :; fi; export HEAVY_OK=1; fi; npx vitest run", true},
+	}
+	for _, c := range cases {
+		if got := verdict(c.command) != ""; got != c.blocked {
+			t.Errorf("verdict(%q) blocked=%v, want %v", c.command, got, c.blocked)
+		}
+	}
+}
+
+func TestShellSyntaxDoesNotHideRuns(t *testing.T) {
+	cases := []struct {
+		command string
+		blocked bool
+	}{
+		{"(npx vitest run)", true},
+		{"{ npx vitest run; }", true},
+		{"! npx vitest run", true},
+		{"if true; then npx vitest run; fi", true},
+		{"for f in a; do npx tsc --noEmit; done", true},
+		{"if false; then :; else npx vitest run; fi", true},
+		{"echo x & npx vitest run", true},
+		{"timeout 60 npx vitest run", true},
+		{"nice -n 5 npx vitest run", true},
+		{"env -i npx vitest run", true},
+		{"xargs npx vitest run", true},
+		{`bash -c "npx vitest run"`, true},
+		{`sh -lc 'npx tsc --noEmit'`, true},
+		{"echo $(npx vitest run)", true},
+		{"echo `npx vitest run`", true},
+		{"(npx vitest run a.test.ts --maxWorkers=1)", false},
+		{`bash -c "echo vitest"`, false},
+		{"echo '$(npx vitest run)'", false},
+		{"if git diff --quiet; then echo clean; fi", false},
+		{"sleep 1 & wait", false},
+		{`ssh host "bash -c 'npx vitest run'"`, false},
+	}
+	for _, c := range cases {
+		if got := verdict(c.command) != ""; got != c.blocked {
+			t.Errorf("verdict(%q) blocked=%v, want %v", c.command, got, c.blocked)
+		}
+	}
+}
+
+// Each wrapper takes its own valued flags: a flag that is valued for one wrapper must not swallow the
+// program after another wrapper that treats it as a plain switch.
+func TestWrapperFlagsArePerWrapper(t *testing.T) {
+	cases := []struct {
+		command string
+		blocked bool
+	}{
+		{"sudo -n vitest run", true},
+		{"sudo -k vitest run", true},
+		{"sudo -s vitest run", true},
+		{"sudo -u me vitest run", true},
+		{"nice -n 5 vitest run", true},
+		{"timeout -s KILL 60 vitest run", true},
+		{"timeout -k 5 60 vitest run", true},
+		{"xargs -n 1 vitest run", true},
+		{"xargs -I {} vitest run {}", true},
+		{"env -u FOO vitest run", true},
+		{"stdbuf -o L vitest run", true},
+		{"sudo -u me vitest run a.test.ts --maxWorkers=1", false},
+	}
+	for _, c := range cases {
+		if got := verdict(c.command) != ""; got != c.blocked {
+			t.Errorf("verdict(%q) blocked=%v, want %v", c.command, got, c.blocked)
+		}
+	}
+}
