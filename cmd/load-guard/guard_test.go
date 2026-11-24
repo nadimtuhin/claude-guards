@@ -377,12 +377,27 @@ func TestConcurrencyCountsRunnersNotWorkers(t *testing.T) {
 	}
 }
 
+func TestHelperBusyLoop(t *testing.T) {
+	if os.Getenv("LOAD_GUARD_TEST_SPIN") != "1" {
+		t.Skip("helper process for TestConcurrencyCapBlocksAtLowLoad")
+	}
+	for {
+	}
+}
+
 func TestConcurrencyCapBlocksAtLowLoad(t *testing.T) {
-	fakeRunner := filepath.Join(t.TempDir(), "vitest")
-	if err := os.Symlink("/usr/bin/yes", fakeRunner); err != nil {
+	// why: /usr/bin/yes behind a "vitest" symlink exits at once where coreutils is a multi-call
+	// binary that dispatches on argv[0]; the test binary itself spins regardless of its name.
+	self, err := os.Executable()
+	if err != nil {
 		t.Fatal(err)
 	}
-	decoy := exec.Command(fakeRunner)
+	fakeRunner := filepath.Join(t.TempDir(), "vitest")
+	if err := os.Symlink(self, fakeRunner); err != nil {
+		t.Fatal(err)
+	}
+	decoy := exec.Command(fakeRunner, "-test.run=^TestHelperBusyLoop$")
+	decoy.Env = append(os.Environ(), "LOAD_GUARD_TEST_SPIN=1")
 	if err := decoy.Start(); err != nil {
 		t.Fatal(err)
 	}
