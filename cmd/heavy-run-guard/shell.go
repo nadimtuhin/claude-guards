@@ -48,7 +48,7 @@ func splitSegments(command string) []segment {
 		if len(words) > 0 {
 			topLevel := parenDepth == 0 && blockDepth == 0 && !inBacktick &&
 				(prevSep == "" || prevSep == ";" || prevSep == "\n") &&
-				(nextSep == "" || nextSep == ";" || nextSep == "\n" || nextSep == "&&")
+				(nextSep == "" || nextSep == ";" || nextSep == "\n" || nextSep == "&&" || nextSep == "||")
 			segments = append(segments, segment{words, topLevel})
 			switch {
 			case compoundOpeners[words[0]]:

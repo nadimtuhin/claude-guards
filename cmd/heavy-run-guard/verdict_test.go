@@ -45,6 +45,7 @@ func TestHeavyOKOnlyAsLeadingAssignment(t *testing.T) {
 		{"HEAVY_OK=1 true; npx vitest run", true},
 		{"export HEAVY_OK=1\nnpx vitest run", false},
 		{"export HEAVY_OK=1 && npx vitest run", false},
+		{"export HEAVY_OK=1 || echo failed; npx vitest run", false},
 		{"cd web; export CI=1 HEAVY_OK=1; npx vitest run", false},
 		{"export HEAVY_OK=1; (npx vitest run)", false},
 		{"npx vitest run; export HEAVY_OK=1", true},
