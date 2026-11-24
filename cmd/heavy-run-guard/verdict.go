@@ -23,8 +23,18 @@ var commandWrappers = map[string]bool{
 // shellKeywords precede a command without being the program it runs.
 var shellKeywords = map[string]bool{"!": true, "{": true, "if": true, "then": true, "elif": true, "else": true, "while": true, "until": true, "do": true}
 
-// wrapperValuedFlags take the next word as their value.
-var wrapperValuedFlags = map[string]bool{"-n": true, "-u": true, "-g": true, "-s": true, "-k": true, "-I": true, "-L": true, "-P": true, "-C": true, "--signal": true, "--kill-after": true}
+// wrapperValuedFlags lists, per wrapper, the flags that take the next word as their value. A flag
+// valued for one wrapper (timeout -k) is a plain switch for another (sudo -k).
+var wrapperValuedFlags = map[string]map[string]bool{
+	"sudo":       {"-u": true, "-g": true, "-p": true, "-C": true, "-D": true, "-U": true, "-r": true, "-t": true, "-T": true},
+	"env":        {"-u": true, "-C": true, "--unset": true, "--chdir": true},
+	"timeout":    {"-s": true, "-k": true, "--signal": true, "--kill-after": true},
+	"nice":       {"-n": true, "--adjustment": true},
+	"xargs":      {"-I": true, "-L": true, "-n": true, "-P": true, "-s": true, "-d": true, "-a": true, "-E": true},
+	"stdbuf":     {"-i": true, "-o": true, "-e": true},
+	"caffeinate": {"-t": true, "-w": true},
+	"exec":       {"-a": true},
+}
 
 var (
 	durationRe   = regexp.MustCompile(`^\d+(\.\d+)?[smhd]?$`)
@@ -62,7 +72,7 @@ func commandStart(words []string) int {
 		case commandWrappers[w]:
 			i++
 			for i < len(words) && strings.HasPrefix(words[i], "-") && words[i] != "-" {
-				if wrapperValuedFlags[words[i]] {
+				if wrapperValuedFlags[w][words[i]] {
 					i++
 				}
 				i++

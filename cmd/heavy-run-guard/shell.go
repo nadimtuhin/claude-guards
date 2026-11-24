@@ -20,6 +20,7 @@ type segment struct {
 var (
 	compoundOpeners = map[string]bool{"if": true, "while": true, "until": true, "for": true, "case": true, "select": true, "{": true}
 	compoundClosers = map[string]bool{"fi": true, "done": true, "esac": true, "}": true}
+	bodyKeywords    = map[string]bool{"then": true, "do": true, "else": true, "elif": true, "!": true}
 )
 
 // splitSegments breaks a shell command into segments (split on && || ; | and newlines) of unquoted
@@ -50,10 +51,16 @@ func splitSegments(command string) []segment {
 				(prevSep == "" || prevSep == ";" || prevSep == "\n") &&
 				(nextSep == "" || nextSep == ";" || nextSep == "\n" || nextSep == "&&" || nextSep == "||")
 			segments = append(segments, segment{words, topLevel})
+			// why: a compound command can open after a keyword (then { ...; }, do if ...), so look
+			// past leading keywords for the opener, or its closer would end the outer block early.
+			first := 0
+			for first < len(words)-1 && bodyKeywords[words[first]] {
+				first++
+			}
 			switch {
-			case compoundOpeners[words[0]]:
+			case compoundOpeners[words[first]]:
 				blockDepth++
-			case compoundClosers[words[0]] && blockDepth > 0:
+			case compoundClosers[words[first]] && blockDepth > 0:
 				blockDepth--
 			}
 		}

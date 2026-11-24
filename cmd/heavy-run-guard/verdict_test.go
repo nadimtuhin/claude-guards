@@ -83,6 +83,9 @@ func TestHeavyOKExportMustBeTopLevelAndUnconditional(t *testing.T) {
 		{"export HEAVY_OK=1 & npx vitest run", true},
 		{"bash -c 'export HEAVY_OK=1'; npx vitest run", true},
 		{"if true; then :; fi; export HEAVY_OK=1; npx vitest run", false},
+		{"if c; then { :; }; export HEAVY_OK=1; fi; npx vitest run", true},
+		{"while c; do { :; }; export HEAVY_OK=1; done; npx vitest run", true},
+		{"if a; then if b; then :; fi; export HEAVY_OK=1; fi; npx vitest run", true},
 	}
 	for _, c := range cases {
 		if got := verdict(c.command) != ""; got != c.blocked {
@@ -117,6 +120,33 @@ func TestShellSyntaxDoesNotHideRuns(t *testing.T) {
 		{"if git diff --quiet; then echo clean; fi", false},
 		{"sleep 1 & wait", false},
 		{`ssh host "bash -c 'npx vitest run'"`, false},
+	}
+	for _, c := range cases {
+		if got := verdict(c.command) != ""; got != c.blocked {
+			t.Errorf("verdict(%q) blocked=%v, want %v", c.command, got, c.blocked)
+		}
+	}
+}
+
+// Each wrapper takes its own valued flags: a flag that is valued for one wrapper must not swallow the
+// program after another wrapper that treats it as a plain switch.
+func TestWrapperFlagsArePerWrapper(t *testing.T) {
+	cases := []struct {
+		command string
+		blocked bool
+	}{
+		{"sudo -n vitest run", true},
+		{"sudo -k vitest run", true},
+		{"sudo -s vitest run", true},
+		{"sudo -u me vitest run", true},
+		{"nice -n 5 vitest run", true},
+		{"timeout -s KILL 60 vitest run", true},
+		{"timeout -k 5 60 vitest run", true},
+		{"xargs -n 1 vitest run", true},
+		{"xargs -I {} vitest run {}", true},
+		{"env -u FOO vitest run", true},
+		{"stdbuf -o L vitest run", true},
+		{"sudo -u me vitest run a.test.ts --maxWorkers=1", false},
 	}
 	for _, c := range cases {
 		if got := verdict(c.command) != ""; got != c.blocked {
