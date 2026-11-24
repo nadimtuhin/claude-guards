@@ -43,6 +43,45 @@ func TestHeavyOKOnlyAsLeadingAssignment(t *testing.T) {
 		{`git commit -m "HEAVY_OK=1" && npx vitest run`, true},
 		{"grep HEAVY_OK=1 README.md && npx tsc --noEmit", true},
 		{"HEAVY_OK=1 true; npx vitest run", true},
+		{"export HEAVY_OK=1\nnpx vitest run", false},
+		{"export HEAVY_OK=1 && npx vitest run", false},
+		{"cd web; export CI=1 HEAVY_OK=1; npx vitest run", false},
+		{"export HEAVY_OK=1; (npx vitest run)", false},
+		{"npx vitest run; export HEAVY_OK=1", true},
+	}
+	for _, c := range cases {
+		if got := verdict(c.command) != ""; got != c.blocked {
+			t.Errorf("verdict(%q) blocked=%v, want %v", c.command, got, c.blocked)
+		}
+	}
+}
+
+// An export only overrides when it is a top-level, unconditional statement: anything that might
+// not run, or runs in a child shell, must not unlock later commands.
+func TestHeavyOKExportMustBeTopLevelAndUnconditional(t *testing.T) {
+	cases := []struct {
+		command string
+		blocked bool
+	}{
+		{"(export HEAVY_OK=1); npx vitest run", true},
+		{"( export HEAVY_OK=1 ) && npx vitest run", true},
+		{"false && export HEAVY_OK=1; npx vitest run", true},
+		{"true || export HEAVY_OK=1; npx vitest run", true},
+		{"if false; then export HEAVY_OK=1; fi; npx vitest run", true},
+		{"if false\nthen\nexport HEAVY_OK=1\nfi\nnpx vitest run", true},
+		{"if false; then :; else export HEAVY_OK=1; fi; npx vitest run", true},
+		{"while false; do export HEAVY_OK=1; done; npx vitest run", true},
+		{"for x in; do\nexport HEAVY_OK=1\ndone\nnpx vitest run", true},
+		{"case x in y) export HEAVY_OK=1;; esac; npx vitest run", true},
+		{"f() { export HEAVY_OK=1; }; npx vitest run", true},
+		{"{ false && export HEAVY_OK=1; }; npx vitest run", true},
+		{"echo $(export HEAVY_OK=1); npx vitest run", true},
+		{"echo \"$(export HEAVY_OK=1)\"; npx vitest run", true},
+		{"echo `export HEAVY_OK=1`; npx vitest run", true},
+		{"export HEAVY_OK=1 | cat; npx vitest run", true},
+		{"export HEAVY_OK=1 & npx vitest run", true},
+		{"bash -c 'export HEAVY_OK=1'; npx vitest run", true},
+		{"if true; then :; fi; export HEAVY_OK=1; npx vitest run", false},
 	}
 	for _, c := range cases {
 		if got := verdict(c.command) != ""; got != c.blocked {

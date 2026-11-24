@@ -7,16 +7,34 @@ type heredoc struct {
 	indented  bool
 }
 
+// segment is one simple command of a shell script.
+type segment struct {
+	words []string
+	// topLevel is true only when the command certainly runs in the invoking shell itself: not in
+	// a subshell, substitution, pipeline or background job, not after && or ||, and not inside a
+	// compound command (if, while, until, for, case, select, { }).
+	topLevel bool
+}
+
+// compoundOpeners and compoundClosers start and end compound commands in command position.
+var (
+	compoundOpeners = map[string]bool{"if": true, "while": true, "until": true, "for": true, "case": true, "select": true, "{": true}
+	compoundClosers = map[string]bool{"fi": true, "done": true, "esac": true, "}": true}
+)
+
 // splitSegments breaks a shell command into segments (split on && || ; | and newlines) of unquoted
 // words. Quoted text stays inside its word and heredoc bodies are dropped, so only words the
 // shell would actually execute or pass as arguments are left.
-func splitSegments(command string) [][]string {
-	var segments [][]string
+func splitSegments(command string) []segment {
+	var segments []segment
 	var words []string
 	var word strings.Builder
 	var pending []heredoc
-	var nested [][]string
+	var nested []segment
 	inWord := false
+	// why: an export only persists when it runs unconditionally in this shell, so each segment
+	// records the separators around it and how deeply it is nested.
+	prevSep, parenDepth, blockDepth, inBacktick := "", 0, 0, false
 
 	endWord := func() {
 		if inWord {
@@ -25,12 +43,22 @@ func splitSegments(command string) [][]string {
 		word.Reset()
 		inWord = false
 	}
-	endSegment := func() {
+	endSegment := func(nextSep string) {
 		endWord()
 		if len(words) > 0 {
-			segments = append(segments, words)
+			topLevel := parenDepth == 0 && blockDepth == 0 && !inBacktick &&
+				(prevSep == "" || prevSep == ";" || prevSep == "\n") &&
+				(nextSep == "" || nextSep == ";" || nextSep == "\n" || nextSep == "&&")
+			segments = append(segments, segment{words, topLevel})
+			switch {
+			case compoundOpeners[words[0]]:
+				blockDepth++
+			case compoundClosers[words[0]] && blockDepth > 0:
+				blockDepth--
+			}
 		}
 		words = nil
+		prevSep = nextSep
 	}
 
 	runes := []rune(command)
@@ -49,7 +77,9 @@ func splitSegments(command string) [][]string {
 					i++
 				} else if body, end, ok := substitutionAt(runes, i); ok {
 					// why: $(...) and `...` inside double quotes still run on this machine.
-					nested = append(nested, splitSegments(body)...)
+					for _, s := range splitSegments(body) {
+						nested = append(nested, segment{s.words, false})
+					}
 					word.WriteString(string(runes[i : end+1]))
 					i = end
 					continue
@@ -78,7 +108,7 @@ func splitSegments(command string) [][]string {
 			i--
 			pending = append(pending, h)
 		case c == '\n':
-			endSegment()
+			endSegment("\n")
 			rest := string(runes[i+1:])
 			consumed := 0
 			for _, h := range pending {
@@ -88,12 +118,20 @@ func splitSegments(command string) [][]string {
 			pending = nil
 		case c == ';' || c == '(' || c == ')' || c == '`':
 			// why: subshells, command substitutions and grouping start a new command.
-			endSegment()
+			endSegment(string(c))
+			switch {
+			case c == '(':
+				parenDepth++
+			case c == ')' && parenDepth > 0:
+				parenDepth--
+			case c == '`':
+				inBacktick = !inBacktick
+			}
 		case (c == '&' || c == '|') && i+1 < len(runes) && runes[i+1] == c:
-			endSegment()
+			endSegment(string([]rune{c, c}))
 			i++
 		case c == '|' || c == '&':
-			endSegment()
+			endSegment(string(c))
 		case c == ' ' || c == '\t':
 			endWord()
 		default:
@@ -101,7 +139,7 @@ func splitSegments(command string) [][]string {
 			word.WriteRune(c)
 		}
 	}
-	endSegment()
+	endSegment("")
 	return append(segments, nested...)
 }
 

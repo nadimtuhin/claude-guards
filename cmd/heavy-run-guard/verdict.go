@@ -97,8 +97,7 @@ func shellScript(program string, args []string) (string, bool) {
 	return "", false
 }
 
-// overridden reports whether HEAVY_OK=1 is set for this segment's command, either as a leading
-// assignment or by an earlier export.
+// overridden reports whether HEAVY_OK=1 is set for this segment's command as a leading assignment.
 func overridden(words []string) bool {
 	return slices.Contains(words[:commandStart(words)], "HEAVY_OK=1")
 }
@@ -146,8 +145,11 @@ func checkTsc(args []string) string {
 // a tool name appearing as an argument, inside quotes or in a heredoc body is not an invocation.
 func verdict(command string) string {
 	exported := false
-	for _, words := range splitSegments(command) {
-		if exportsOverride(words) {
+	for _, seg := range splitSegments(command) {
+		words := seg.words
+		// why: an export in a subshell, pipeline, substitution or conditional may never reach
+		// this shell, so only a top-level, unconditional export counts.
+		if seg.topLevel && exportsOverride(words) {
 			exported = true
 		}
 		if exported || overridden(words) {
